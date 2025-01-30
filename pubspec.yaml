@@ -42,6 +42,8 @@ dependencies:
   flutter_animate: ^4.3.0
   go_router: ^13.0.1
   collection: ^1.18.0
+  video_player: ^2.9.2
+  chewie: ^1.10.0
 
 dev_dependencies:
   flutter_test:

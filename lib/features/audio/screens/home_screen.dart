@@ -7,6 +7,7 @@ import '../widgets/timer_widget.dart';
 import '../widgets/sound_mixer.dart';
 import 'dart:math';
 import '../../../core/models/sound_model.dart';
+import '../../video/screens/video_screen.dart';
 
 /// 主屏幕
 ///
@@ -228,47 +229,59 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       BuildContext context, SoundModel? sound, TimerState timerState) {
     return Scaffold(
       body: SafeArea(
-        child: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Theme.of(context).colorScheme.surface,
-                Theme.of(context).colorScheme.surface.withOpacity(0.8),
-              ],
+        child: IndexedStack(
+          index: _selectedIndex,
+          children: [
+            // 声音页面
+            Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Theme.of(context).colorScheme.surface,
+                    Theme.of(context).colorScheme.surface.withOpacity(0.8),
+                  ],
+                ),
+              ),
+              child: Column(
+                children: [
+                  const SizedBox(height: 20),
+                  Text(
+                    'Sleepy Sounds',
+                    style: Theme.of(context).textTheme.headlineLarge,
+                  ),
+                  const SizedBox(height: 10),
+                  const Expanded(
+                    flex: 2,
+                    child: TimerWidget(),
+                  ),
+                  if (sound != null) ...[
+                    const SizedBox(height: 40),
+                    GestureDetector(
+                      onTap: () => _showSoundSelector(context),
+                      child: _getIconForSound(sound, context),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      sound.name,
+                      style: Theme.of(context).textTheme.headlineMedium,
+                    ),
+                    const SizedBox(height: 16),
+                    _buildControlButtons(context, sound),
+                    const SizedBox(height: 20),
+                  ],
+                  const Spacer(),
+                ],
+              ),
             ),
-          ),
-          child: Column(
-            children: [
-              const SizedBox(height: 20),
-              Text(
-                'Sleepy Sounds',
-                style: Theme.of(context).textTheme.headlineLarge,
-              ),
-              const SizedBox(height: 10),
-              const Expanded(
-                flex: 2,
-                child: TimerWidget(),
-              ),
-              if (sound != null) ...[
-                const SizedBox(height: 40),
-                GestureDetector(
-                  onTap: () => _showSoundSelector(context),
-                  child: _getIconForSound(sound, context),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  sound.name,
-                  style: Theme.of(context).textTheme.headlineMedium,
-                ),
-                const SizedBox(height: 16),
-                _buildControlButtons(context, sound),
-                const SizedBox(height: 20),
-              ],
-              const Spacer(),
-            ],
-          ),
+            // 视频页面
+            const VideoScreen(),
+            // 设置页面（待实现）
+            const Center(
+              child: Text('设置功能即将推出'),
+            ),
+          ],
         ),
       ),
       bottomNavigationBar: Container(
@@ -286,7 +299,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
             _buildNavItem(context, Icons.music_note, 0),
-            _buildNavItem(context, Icons.self_improvement, 1),
+            _buildNavItem(context, Icons.video_library, 1),
             _buildNavItem(context, Icons.settings, 2),
           ],
         ),
@@ -355,26 +368,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         setState(() {
           _selectedIndex = index;
         });
-        switch (index) {
-          case 0: // 声音页面
-            break;
-          case 1: // 冥想页面
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('冥想功能即将推出'),
-                duration: Duration(seconds: 2),
-              ),
-            );
-            break;
-          case 2: // 设置页面
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('设置功能即将推出'),
-                duration: Duration(seconds: 2),
-              ),
-            );
-            break;
-        }
       },
     );
   }
