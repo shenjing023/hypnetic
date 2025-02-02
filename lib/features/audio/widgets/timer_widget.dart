@@ -31,6 +31,12 @@ class _TimerWidgetState extends ConsumerState<TimerWidget> {
   @override
   Widget build(BuildContext context) {
     final timerState = ref.watch(timerProvider);
+    final shouldShowTimer = timerState.source == TimerSource.homeScreen ||
+        timerState.source == TimerSource.none;
+
+    if (!shouldShowTimer) {
+      return const SizedBox(); // 如果定时器不属于本页面，不显示
+    }
 
     // 只有在定时器被设置过且倒计时结束时才退出应用
     if (timerState.duration.inSeconds > 0 &&
@@ -42,10 +48,10 @@ class _TimerWidgetState extends ConsumerState<TimerWidget> {
     }
     // 监听定时器状态，处理音量渐弱
     else if (timerState.remaining.inSeconds <= 30) {
-      final volumeRatio = timerState.remaining.inSeconds / 30;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        ref.read(soundProvider.notifier).setGlobalVolume(volumeRatio);
-      });
+      // final volumeRatio = timerState.remaining.inSeconds / 30;
+      // WidgetsBinding.instance.addPostFrameCallback((_) {
+      //   ref.read(soundProvider.notifier).setGlobalVolume(volumeRatio);
+      // });
     }
 
     // 根据选择的样式返回对应的定时器
@@ -63,6 +69,8 @@ class _TimerWidgetState extends ConsumerState<TimerWidget> {
           timerState: timerState,
         );
     }
+
+    return const SizedBox();
   }
 }
 

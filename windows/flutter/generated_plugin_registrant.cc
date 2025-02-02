@@ -6,9 +6,9 @@
 
 #include "generated_plugin_registrant.h"
 
-#include <rive_common/rive_plugin.h>
+#include <connectivity_plus/connectivity_plus_windows_plugin.h>
 
 void RegisterPlugins(flutter::PluginRegistry* registry) {
-  RivePluginRegisterWithRegistrar(
-      registry->GetRegistrarForPlugin("RivePlugin"));
+  ConnectivityPlusWindowsPluginRegisterWithRegistrar(
+      registry->GetRegistrarForPlugin("ConnectivityPlusWindowsPlugin"));
 }

@@ -1,0 +1,20 @@
+{
+    "appTitle": "Bilibili Player",
+    "home": "Home",
+    "settings": "Settings",
+    "search": "Search",
+    "play": "Play",
+    "pause": "Pause",
+    "next": "Next",
+    "previous": "Previous",
+    "quality": "Quality",
+    "volume": "Volume",
+    "loading": "Loading...",
+    "error": "Error",
+    "retry": "Retry",
+    "networkError": "Network Error",
+    "cacheCleared": "Cache Cleared",
+    "language": "Language",
+    "about": "About",
+    "version": "Version"
+} 

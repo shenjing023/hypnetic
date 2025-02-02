@@ -1,0 +1,20 @@
+{
+    "appTitle": "哔哩哔哩播放器",
+    "home": "首页",
+    "settings": "设置",
+    "search": "搜索",
+    "play": "播放",
+    "pause": "暂停",
+    "next": "下一个",
+    "previous": "上一个",
+    "quality": "画质",
+    "volume": "音量",
+    "loading": "加载中...",
+    "error": "错误",
+    "retry": "重试",
+    "networkError": "网络错误",
+    "cacheCleared": "缓存已清除",
+    "language": "语言",
+    "about": "关于",
+    "version": "版本"
+} 

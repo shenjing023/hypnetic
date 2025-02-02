@@ -1,100 +1,117 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../models/sound_model.dart';
-import '../models/audio_manager.dart';
-import '../services/sound_config_service.dart';
+// import 'package:flutter_riverpod/flutter_riverpod.dart';
+// import '../models/sound_model.dart';
+// import '../models/audio_manager.dart';
+// import '../services/sound_config_service.dart';
+// import 'video_provider.dart';
+// import 'timer_provider.dart';
 
-final soundProvider =
-    StateNotifierProvider<SoundNotifier, List<SoundModel>>((ref) {
-  return SoundNotifier();
-});
+// final soundProvider =
+//     StateNotifierProvider<SoundNotifier, List<SoundModel>>((ref) {
+//   return SoundNotifier(ref);
+// });
 
-class SoundNotifier extends StateNotifier<List<SoundModel>> {
-  SoundNotifier() : super([]);
+// class SoundNotifier extends StateNotifier<List<SoundModel>> {
+//   final Ref _ref;
+//   bool _isProcessing = false;
 
-  Future<void> initializeSounds() async {
-    try {
-      final configService = SoundConfigService();
-      await configService.loadSoundConfig();
-      final sounds = configService.sounds;
+//   SoundNotifier(this._ref) : super([]) {
+//     // 设置音频播放状态回调
+//     AudioManager().setPlayStateCallback(_handlePlayStateChange);
+//   }
 
-      for (var sound in sounds) {
-        await sound.loadAudio();
-      }
+//   void _handlePlayStateChange(String id, bool isPlaying) {
+//     state = [
+//       for (final s in state)
+//         if (s.id == id)
+//           s.copyWith(isPlaying: isPlaying)
+//         else
+//           s.copyWith(isPlaying: false)
+//     ];
 
-      state = sounds;
-    } catch (e) {
-      print('音频初始化错误: $e');
-    }
-  }
+//     // 处理定时器
+//     if (isPlaying) {
+//       final timerState = _ref.read(timerProvider);
+//       if (timerState.remaining > Duration.zero) {
+//         _ref
+//             .read(timerProvider.notifier)
+//             .startWithSource(TimerSource.homeScreen);
+//       }
+//     } else {
+//       if (_ref.read(timerProvider).source == TimerSource.homeScreen) {
+//         _ref.read(timerProvider.notifier).pause();
+//       }
+//     }
+//   }
 
-  Future<void> toggleSound(String id) async {
-    try {
-      final audioManager = AudioManager();
-      final sound = state.firstWhere((s) => s.id == id);
-      final isPlaying = sound.isPlaying;
+//   Future<void> initializeSounds() async {
+//     try {
+//       final configService = SoundConfigService();
+//       await configService.loadSoundConfig();
+//       final sounds = configService.sounds;
 
-      // 如果要播放新的声音，先停止其他正在播放的声音
-      if (!isPlaying) {
-        final playingSound = state.where((s) => s.isPlaying).firstOrNull;
-        if (playingSound != null) {
-          await audioManager.pause(playingSound.id);
-        }
-      }
+//       for (var sound in sounds) {
+//         await sound.loadAudio();
+//       }
 
-      // 更新所有声音的状态
-      state = [
-        for (final s in state)
-          if (s.id == id)
-            SoundModel(
-              id: s.id,
-              type: s.type,
-              assetPath: s.assetPath,
-              isPlaying: !isPlaying,
-            )
-          else if (s.isPlaying) // 确保其他声音都停止
-            SoundModel(
-              id: s.id,
-              type: s.type,
-              assetPath: s.assetPath,
-              isPlaying: false,
-            )
-          else
-            s
-      ];
+//       state = sounds;
+//     } catch (e) {
+//       print('音频初始化错误: $e');
+//     }
+//   }
 
-      // 执行音频操作
-      if (!isPlaying) {
-        await audioManager.play(id);
-      } else {
-        await audioManager.pause(id);
-      }
-    } catch (e) {
-      print('播放出错: $e');
-      // 如果出错，恢复原始状态
-      state = [
-        for (final s in state)
-          if (s.id == id)
-            SoundModel(
-              id: s.id,
-              type: s.type,
-              assetPath: s.assetPath,
-              isPlaying: AudioManager().isPlaying(id),
-            )
-          else
-            s
-      ];
-    }
-  }
+//   Future<void> toggleSound(String id) async {
+//     if (_isProcessing) return;
+//     _isProcessing = true;
 
-  Future<void> setGlobalVolume(double volume) async {
-    try {
-      await AudioManager().setGlobalVolume(volume);
-    } catch (e) {
-      print('设置全局音量出错: $e');
-    }
-  }
+//     try {
+//       final audioManager = AudioManager();
+//       final isPlaying = audioManager.isPlaying(id);
 
-  Future<void> dispose() async {
-    await AudioManager().dispose();
-  }
-}
+//       // 如果视频在播放，先停止视频
+//       if (!isPlaying && _ref.read(playbackStateProvider).isPlaying) {
+//         _ref.read(playbackStateProvider.notifier).setPlaying(false);
+//         _ref.read(currentVideoProvider.notifier).clear();
+//         _ref.read(streamStateProvider.notifier).clear();
+//       }
+
+//       if (isPlaying) {
+//         await audioManager.pause(id);
+//       } else {
+//         // 停止所有正在播放的音频
+//         final playingSounds = audioManager.getPlayingAudioIds();
+//         for (final soundId in playingSounds) {
+//           await audioManager.pause(soundId);
+//         }
+
+//         // 播放新音频
+//         await audioManager.play(id);
+//       }
+//     } catch (e) {
+//       print('播放出错: $e');
+//       // 发生错误时重置状态
+//       state = [for (final s in state) s.copyWith(isPlaying: false)];
+//       // 确保暂停定时器
+//       _ref.read(timerProvider.notifier).pause();
+//     } finally {
+//       _isProcessing = false;
+//     }
+//   }
+
+//   Future<void> setGlobalVolume(double volume) async {
+//     try {
+//       await AudioManager().setGlobalVolume(volume);
+//     } catch (e) {
+//       print('设置全局音量出错: $e');
+//     }
+//   }
+
+//   void updateAllStates(bool isPlaying) {
+//     state = [for (final s in state) s.copyWith(isPlaying: isPlaying)];
+//   }
+
+//   @override
+//   void dispose() {
+//     AudioManager().setPlayStateCallback(null);
+//     super.dispose();
+//   }
+// }

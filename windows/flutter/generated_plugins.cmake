@@ -3,7 +3,7 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
-  rive_common
+  connectivity_plus
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST

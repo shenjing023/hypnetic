@@ -30,6 +30,8 @@ class AudioManager {
   final Map<String, AudioPlayer> _players = {};
   final Map<String, AudioSource> _audioSources = {};
   final Map<String, double> _volumes = {};
+  String? _currentPlayingId;
+  Function(String, bool)? onPlayStateChanged; // 添加状态变化回调
 
   /// 加载音频资源
   ///
@@ -42,12 +44,29 @@ class AudioManager {
         final audioSource = AudioSource.asset(assetPath);
         _audioSources[id] = audioSource;
 
-        // 为每个音频创建一个播放器
         final player = AudioPlayer();
         await player.setAudioSource(audioSource);
         await player.setLoopMode(LoopMode.one);
         _players[id] = player;
         _volumes[id] = 1.0;
+
+        // 使用playerStateStream监听播放状态变化
+        player.playerStateStream.listen((playerState) {
+          final isPlaying = playerState.playing;
+          if (!isPlaying && _currentPlayingId == id) {
+            _currentPlayingId = null;
+          }
+          // 触发状态变化回调
+          onPlayStateChanged?.call(id, isPlaying);
+        });
+
+        // 额外监听播放完成事件
+        player.processingStateStream.listen((state) {
+          if (state == ProcessingState.completed && _currentPlayingId == id) {
+            player.seek(Duration.zero); // 循环播放
+            player.play();
+          }
+        });
       }
     } catch (e) {
       throw AudioLoadException(id, e.toString());
@@ -57,25 +76,67 @@ class AudioManager {
   Future<void> play(String id) async {
     try {
       final player = _players[id];
-      if (player != null) {
-        await player.play();
+      if (player == null) return;
+
+      // 如果当前音频已经在播放，不做任何操作
+      if (_currentPlayingId == id && player.playing) {
+        return;
       }
+
+      // 停止当前正在播放的音频
+      if (_currentPlayingId != null && _currentPlayingId != id) {
+        final currentPlayer = _players[_currentPlayingId];
+        if (currentPlayer != null) {
+          await currentPlayer.pause();
+          _currentPlayingId = null;
+        }
+      }
+
+      // 设置当前播放ID（提前设置以确保UI响应）
+      _currentPlayingId = id;
+
+      // 确保从头开始播放
+      await player.seek(Duration.zero);
+      await player.play();
+
+      // 立即触发回调
+      onPlayStateChanged?.call(id, true);
     } catch (e) {
       print('播放音频失败: $e');
-      rethrow;
+      _currentPlayingId = null;
+      onPlayStateChanged?.call(id, false);
     }
   }
 
   Future<void> pause(String id) async {
     try {
       final player = _players[id];
-      if (player != null) {
+      if (player != null && _currentPlayingId == id) {
         await player.pause();
+        _currentPlayingId = null;
+        // 立即触发回调
+        onPlayStateChanged?.call(id, false);
       }
     } catch (e) {
       print('暂停音频失败: $e');
-      rethrow;
+      _currentPlayingId = null;
+      onPlayStateChanged?.call(id, false);
     }
+  }
+
+  bool isPlaying(String id) {
+    final player = _players[id];
+    return player != null && player.playing && _currentPlayingId == id;
+  }
+
+  Future<void> dispose() async {
+    for (var player in _players.values) {
+      await player.dispose();
+    }
+    _players.clear();
+    _audioSources.clear();
+    _volumes.clear();
+    _currentPlayingId = null;
   }
 
   Future<void> setVolume(String id, double volume) async {
@@ -87,37 +148,19 @@ class AudioManager {
       }
     } catch (e) {
       print('设置音量失败: $e');
-      rethrow;
     }
   }
 
   Future<void> setGlobalVolume(double volume) async {
     try {
       for (var entry in _players.entries) {
-        final id = entry.key;
-        final player = entry.value;
-        if (player.playing) {
-          await player.setVolume(_volumes[id]! * volume);
+        if (entry.key == _currentPlayingId) {
+          await entry.value.setVolume(_volumes[entry.key]! * volume);
         }
       }
     } catch (e) {
       print('设置全局音量失败: $e');
-      rethrow;
     }
-  }
-
-  Future<void> dispose() async {
-    for (var player in _players.values) {
-      await player.dispose();
-    }
-    _players.clear();
-    _audioSources.clear();
-    _volumes.clear();
-  }
-
-  bool isPlaying(String id) {
-    final player = _players[id];
-    return player?.playing ?? false;
   }
 
   double getVolume(String id) {
@@ -147,10 +190,8 @@ class AudioManager {
         .toList();
   }
 
-  /// 停止所有音频播放
-  Future<void> stopAll() async {
-    for (var player in _players.values) {
-      await player.stop();
-    }
+  /// 设置播放状态变化回调
+  void setPlayStateCallback(Function(String, bool)? callback) {
+    onPlayStateChanged = callback;
   }
 }
