@@ -23,68 +23,215 @@ class AudioPlayerWidget extends ConsumerStatefulWidget {
   ConsumerState<AudioPlayerWidget> createState() => _AudioPlayerWidgetState();
 }
 
-class _AudioPlayerWidgetState extends ConsumerState<AudioPlayerWidget> {
-  AudioPlayer? _player;
+class _AudioPlayerWidgetState extends ConsumerState<AudioPlayerWidget>
+    with AutomaticKeepAliveClientMixin {
   StreamSubscription? _positionSubscription;
   StreamSubscription? _playerStateSubscription;
-  StreamSubscription? _volumeSubscription;
   int _retryCount = 0;
   static const int maxRetries = 3;
   static const Duration timeoutDuration = Duration(seconds: 15);
+  bool _isDisposed = false;
+  String? _currentUrl;
+  Completer<void>? _setupCompleter;
+
+  AudioPlayer? get _player => ref.read(audioPlayerProvider).player;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
     super.initState();
-    // 使用 addPostFrameCallback 确保在构建完成后初始化
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _initializePlayer();
-    });
+    debugPrint(
+        '🔵 [AudioPlayer] initState - URL: ${widget.streamInfo.audioUrl}');
+    _setupPlayer();
   }
 
   @override
   void didUpdateWidget(AudioPlayerWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
+    debugPrint('🔄 [AudioPlayer] didUpdateWidget called');
 
-    // 如果音频URL发生变化，重新初始化播放器
+    if (_isDisposed) {
+      debugPrint('⚠️ [AudioPlayer] Widget is disposed, ignoring update');
+      return;
+    }
+
+    // 检查音频URL是否发生变化
     if (widget.streamInfo.audioUrl != oldWidget.streamInfo.audioUrl) {
-      _disposePlayer().then((_) {
-        if (mounted) {
-          // 使用 addPostFrameCallback 确保在构建完成后初始化
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _initializePlayer();
-          });
+      debugPrint(
+          '🔄 [AudioPlayer] URL changed - Old: ${oldWidget.streamInfo.audioUrl}, New: ${widget.streamInfo.audioUrl}');
+      _setupPlayer();
+    } else if (widget.isPlaying != oldWidget.isPlaying) {
+      debugPrint(
+          '🎵 [AudioPlayer] Play state changed - Old: ${oldWidget.isPlaying}, New: ${widget.isPlaying}');
+      _updatePlayState();
+    }
+  }
+
+  void _updatePlayState() {
+    if (_player == null || _isDisposed) {
+      debugPrint(
+          '⚠️ [AudioPlayer] Cannot update play state - player is null or disposed');
+      return;
+    }
+
+    debugPrint('🎮 [AudioPlayer] Updating play state to: ${widget.isPlaying}');
+    if (widget.isPlaying) {
+      _player?.play().then((_) {
+        if (!_isDisposed) {
+          debugPrint('✅ [AudioPlayer] Play succeeded');
+        }
+      }).catchError((e) {
+        if (!_isDisposed) {
+          debugPrint('❌ [AudioPlayer] Play failed: $e');
         }
       });
-    }
-    // 当播放状态改变时，控制播放器
-    else if (widget.isPlaying != oldWidget.isPlaying && _player != null) {
-      // 使用 addPostFrameCallback 确保在构建完成后更新状态
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (widget.isPlaying) {
-          _player?.play();
-        } else {
-          _player?.pause();
+    } else {
+      _player?.pause().then((_) {
+        if (!_isDisposed) {
+          debugPrint('✅ [AudioPlayer] Pause succeeded');
+        }
+      }).catchError((e) {
+        if (!_isDisposed) {
+          debugPrint('❌ [AudioPlayer] Pause failed: $e');
         }
       });
     }
   }
 
-  Future<void> _disposePlayer() async {
-    // 在销毁播放器之前清除 provider 中的引用
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        ref.read(audioPlayerProvider.notifier).setPlayer(null);
+  Future<void> _setupPlayer() async {
+    if (_isDisposed) {
+      debugPrint('⚠️ [AudioPlayer] Cannot setup - widget is disposed');
+      return;
+    }
+
+    debugPrint('🎯 [AudioPlayer] Setting up player');
+
+    if (_setupCompleter != null) {
+      debugPrint('⏳ [AudioPlayer] Setup already in progress, waiting...');
+      await _setupCompleter!.future;
+      return;
+    }
+
+    _setupCompleter = Completer<void>();
+
+    try {
+      debugPrint('🧹 [AudioPlayer] Starting cleanup');
+      await _cleanupSubscriptions();
+
+      if (_isDisposed) {
+        debugPrint('⚠️ [AudioPlayer] Widget disposed after cleanup');
+        return;
       }
-    });
 
-    await _positionSubscription?.cancel();
-    await _playerStateSubscription?.cancel();
-    await _volumeSubscription?.cancel();
-    await _player?.dispose();
-    _player = null;
+      // 通知 provider 设置新的音频源
+      await ref.read(audioPlayerProvider.notifier).setupAudioSource(
+            widget.streamInfo.audioUrl,
+            id: widget.streamInfo.id,
+            platform: widget.streamInfo.platform,
+            title: widget.streamInfo.title,
+            author: widget.streamInfo.author,
+            cover: widget.streamInfo.cover,
+            duration: widget.streamInfo.duration,
+          );
+
+      if (_isDisposed) {
+        debugPrint('⚠️ [AudioPlayer] Widget disposed after setup');
+        return;
+      }
+
+      debugPrint('🔄 [AudioPlayer] Setting up listeners');
+      await _setupListeners();
+
+      if (_isDisposed || !mounted) return;
+
+      if (widget.isPlaying && !_isDisposed) {
+        debugPrint('▶️ [AudioPlayer] Starting playback');
+        await _player?.play();
+      }
+
+      _retryCount = 0;
+      debugPrint('✅ [AudioPlayer] Player setup completed successfully');
+    } catch (e) {
+      debugPrint('❌ [AudioPlayer] Player setup failed: $e');
+      if (_retryCount < maxRetries && !_isDisposed) {
+        _retryCount++;
+        debugPrint('🔄 [AudioPlayer] Scheduling retry #$_retryCount');
+        Future.delayed(Duration(seconds: _retryCount), _setupPlayer);
+      }
+    } finally {
+      if (!_isDisposed &&
+          _setupCompleter != null &&
+          !_setupCompleter!.isCompleted) {
+        _setupCompleter!.complete();
+      }
+      _setupCompleter = null;
+    }
   }
 
-  /// 获取平台特定的HTTP头
+  Future<void> _cleanupSubscriptions() async {
+    debugPrint('🔌 [AudioPlayer] Cancelling subscriptions');
+    await Future.wait([
+      _positionSubscription?.cancel() ?? Future.value(),
+      _playerStateSubscription?.cancel() ?? Future.value(),
+    ]);
+
+    _positionSubscription = null;
+    _playerStateSubscription = null;
+  }
+
+  Future<void> _setupListeners() async {
+    if (_isDisposed || !mounted || _player == null) {
+      debugPrint('⚠️ [AudioPlayer] Cannot setup listeners - invalid state');
+      return;
+    }
+
+    debugPrint('👂 [AudioPlayer] Setting up state listener');
+    _playerStateSubscription = _player!.playerStateStream.listen(
+      (state) {
+        if (_isDisposed) return;
+        debugPrint(
+            '🎵 [AudioPlayer] State changed: ${state.processingState} - Playing: ${state.playing}');
+        if (state.processingState == ProcessingState.completed) {
+          debugPrint('🔁 [AudioPlayer] Playback completed, restarting');
+          _player!.seek(Duration.zero);
+          if (widget.isPlaying) {
+            _player!.play();
+          }
+        }
+      },
+      onError: (error) {
+        if (!_isDisposed) {
+          debugPrint('❌ [AudioPlayer] State listener error: $error');
+        }
+      },
+    );
+
+    if (_isDisposed) return;
+
+    debugPrint('⏱️ [AudioPlayer] Setting up position listener');
+    _positionSubscription = _player!.positionStream.listen(
+      (position) {
+        if (_isDisposed) return;
+        widget.onPositionChanged(position);
+      },
+      onError: (error) {
+        if (!_isDisposed) {
+          debugPrint('❌ [AudioPlayer] Position listener error: $error');
+        }
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    debugPrint('👋 [AudioPlayer] Disposing widget');
+    _isDisposed = true;
+    _cleanupSubscriptions();
+    super.dispose();
+  }
+
   Map<String, String> _getPlatformHeaders() {
     switch (widget.streamInfo.platform) {
       case 'bilibili':
@@ -93,175 +240,15 @@ class _AudioPlayerWidgetState extends ConsumerState<AudioPlayerWidget> {
           'User-Agent':
               'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         };
-      // 其他平台可以在这里添加
       default:
         return {};
     }
   }
 
-  Future<void> _initializePlayer() async {
-    if (!mounted) return;
-
-    try {
-      final audioUrl = widget.streamInfo.audioUrl;
-      if (audioUrl.isEmpty) {
-        throw Exception('音频 URL 为空');
-      }
-
-      // 验证 URL 格式
-      final uri = Uri.parse(audioUrl);
-      if (!uri.isAbsolute) {
-        throw Exception('无效的音频 URL: $audioUrl');
-      }
-
-      debugPrint('开始初始化播放器，URL: $audioUrl');
-      final player = AudioPlayer();
-      _player = player;
-
-      // 使用 Future.microtask 确保在下一个微任务中更新 provider
-      Future.microtask(() {
-        if (mounted) {
-          ref.read(audioPlayerProvider.notifier).setPlayer(player);
-        }
-      });
-
-      // 设置音频源
-      final headers = _getPlatformHeaders();
-      debugPrint('使用 headers: $headers');
-
-      final audioSource = AudioSource.uri(
-        uri,
-        headers: {
-          ...headers,
-          'Accept': '*/*',
-          'Accept-Encoding': 'identity',
-          'Range': 'bytes=0-',
-        },
-        tag: MediaItem(
-          id: widget.streamInfo.id,
-          album: widget.streamInfo.platform,
-          title: widget.streamInfo.title,
-          artist: widget.streamInfo.author,
-          artUri: Uri.parse(widget.streamInfo.cover),
-          duration: widget.streamInfo.duration,
-        ),
-      );
-
-      // 添加加载状态监听
-      player.playerStateStream.listen(
-        (state) {
-          debugPrint('播放器状态: ${state.processingState}');
-        },
-        onError: (error) {
-          debugPrint('播放器状态错误: $error');
-        },
-      );
-
-      // 使用 catchError 处理加载错误
-      await player
-          .setAudioSource(
-        audioSource,
-        initialPosition: Duration.zero,
-        preload: true,
-      )
-          .timeout(
-        timeoutDuration,
-        onTimeout: () {
-          throw TimeoutException('音频加载超时');
-        },
-      ).catchError((error) async {
-        debugPrint('音频加载失败: $error');
-        if (_retryCount < maxRetries) {
-          _retryCount++;
-          debugPrint('尝试重新加载 (${_retryCount}/$maxRetries)');
-          await Future.delayed(Duration(seconds: _retryCount));
-          return _retryLoadAudio(player, audioSource);
-        } else {
-          throw Exception('音频加载失败，已达到最大重试次数');
-        }
-      });
-
-      debugPrint('音频源设置成功');
-      _retryCount = 0; // 重置重试计数
-
-      // 设置循环播放
-      await player.setLoopMode(LoopMode.one);
-
-      // 监听播放位置
-      _positionSubscription = player.positionStream.listen(
-        (position) {
-          widget.onPositionChanged(position);
-        },
-        onError: (error) {
-          debugPrint('播放位置监听错误: $error');
-        },
-      );
-
-      // 监听播放状态
-      _playerStateSubscription = player.playerStateStream.listen(
-        (state) {
-          debugPrint('播放状态变化: ${state.processingState}');
-          if (state.processingState == ProcessingState.completed) {
-            player.seek(Duration.zero);
-            if (widget.isPlaying) {
-              player.play();
-            }
-          }
-        },
-        onError: (error) {
-          debugPrint('播放状态监听错误: $error');
-        },
-      );
-
-      if (widget.isPlaying) {
-        await player.play();
-      }
-    } catch (e, stack) {
-      debugPrint('音频播放器初始化失败: $e');
-      debugPrint('错误堆栈: $stack');
-      await _disposePlayer();
-      // 如果还有重试次数，则重试
-      if (_retryCount < maxRetries) {
-        _retryCount++;
-        debugPrint('尝试重新初始化 (${_retryCount}/$maxRetries)');
-        await Future.delayed(Duration(seconds: _retryCount));
-        return _initializePlayer();
-      }
-    }
-  }
-
-  Future<void> _retryLoadAudio(
-      AudioPlayer player, AudioSource audioSource) async {
-    try {
-      await player
-          .setAudioSource(
-        audioSource,
-        initialPosition: Duration.zero,
-        preload: true,
-      )
-          .timeout(
-        timeoutDuration,
-        onTimeout: () {
-          throw TimeoutException('音频重试加载超时');
-        },
-      );
-      return;
-    } catch (e) {
-      debugPrint('重试加载失败: $e');
-      rethrow;
-    }
-  }
-
-  Future<void> setVolume(double volume) async {
-    try {
-      await _player?.setVolume(volume.clamp(0.0, 1.0));
-    } catch (e) {
-      debugPrint('设置音量失败: $e');
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
+    super.build(context);
+
     if (_player == null) {
       return Container();
     }
