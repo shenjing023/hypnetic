@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'video_provider.dart';
+import 'package:flutter/foundation.dart';
+import 'audio_player_provider.dart';
 
 /// 定时器来源
 enum TimerSource {
@@ -98,53 +101,7 @@ class FadeOutController {
 ///
 /// 监听音频状态变化，自动控制定时器的启动和暂停
 final timerProvider = StateNotifierProvider<TimerNotifier, TimerState>((ref) {
-  final notifier = TimerNotifier(ref);
-
-  // // 监听声音和视频的播放状态
-  // ref.listen<({bool isPlaying, Duration position, Duration duration})>(
-  //     playbackStateProvider, (previous, next) {
-  //   if (next.isPlaying) {
-  //     // 如果视频开始播放，且当前定时器不是来自HomePage
-  //     if (notifier.state.source != TimerSource.homePage) {
-  //       // 停止所有声音
-  //       final sounds = ref.read(soundProvider);
-  //       for (var sound in sounds.where((s) => s.isPlaying)) {
-  //         ref.read(soundProvider.notifier).toggleSound(sound.id);
-  //       }
-  //       // 重置定时器并设置新来源
-  //       notifier.resetAndStart(TimerSource.homePage);
-  //     }
-  //   } else {
-  //     // 视频停止时，只有当定时器来源是HomePage时才暂停
-  //     if (notifier.state.source == TimerSource.homePage) {
-  //       notifier.pause();
-  //     }
-  //   }
-  // });
-
-  // ref.listen<List<SoundModel>>(soundProvider, (previous, next) {
-  //   final soundPlaying = next.any((s) => s.isPlaying);
-  //   if (soundPlaying) {
-  //     // 如果有声音在播放，且当前定时器不是来自HomeScreen
-  //     if (notifier.state.source != TimerSource.homeScreen) {
-  //       // 停止视频播放
-  //       if (ref.read(playbackStateProvider).isPlaying) {
-  //         ref.read(playbackStateProvider.notifier).setPlaying(false);
-  //         ref.read(currentVideoProvider.notifier).clear();
-  //         ref.read(streamStateProvider.notifier).clear();
-  //       }
-  //       // 重置定时器并设置新来源
-  //       notifier.resetAndStart(TimerSource.homeScreen);
-  //     }
-  //   } else {
-  //     // 声音停止时，只有当定时器来源是HomeScreen时才暂停
-  //     if (notifier.state.source == TimerSource.homeScreen) {
-  //       notifier.pause();
-  //     }
-  //   }
-  // });
-
-  return notifier;
+  return TimerNotifier(ref);
 });
 
 /// 定时器状态管理器
@@ -160,39 +117,36 @@ class TimerNotifier extends StateNotifier<TimerState> {
           source: TimerSource.none,
         ));
 
+  /// 重置并启动定时器
   void resetAndStart(TimerSource newSource) {
-    // 停止当前定时器
     _timer?.cancel();
-
-    // 如果定时器时长为0，设置默认15分钟
     final duration = state.duration.inSeconds == 0
         ? const Duration(minutes: 15)
         : state.duration;
 
-    // 重置状态并启动
     state = TimerState(
       duration: duration,
       remaining: duration,
       isRunning: true,
       source: newSource,
     );
-    // _startTimer();
+    _startTimer();
   }
 
+  /// 使用指定来源启动定时器
   void startWithSource(TimerSource source) {
-    // 如果来源不同，不要启动新的定时器
     if (state.source != TimerSource.none && state.source != source) {
       return;
     }
 
     if (!state.isRunning && state.remaining > Duration.zero) {
-      // _startTimer();
+      _startTimer();
       state = state.copyWith(isRunning: true, source: source);
     }
   }
 
+  /// 启动定时器
   void start() {
-    // 只有当定时器没有特定来源时才允许启动
     if (state.source == TimerSource.none &&
         !state.isRunning &&
         state.remaining > Duration.zero) {
@@ -201,11 +155,13 @@ class TimerNotifier extends StateNotifier<TimerState> {
     }
   }
 
+  /// 暂停定时器
   void pause() {
     _timer?.cancel();
     state = state.copyWith(isRunning: false);
   }
 
+  /// 设置定时器时长
   void setDuration(Duration duration) {
     _timer?.cancel();
     state = TimerState(
@@ -219,6 +175,8 @@ class TimerNotifier extends StateNotifier<TimerState> {
   void _startTimer() {
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) return;
+
       final newRemaining = state.remaining - const Duration(seconds: 1);
 
       if (newRemaining.inSeconds <= 0) {
@@ -228,36 +186,48 @@ class TimerNotifier extends StateNotifier<TimerState> {
           isRunning: false,
           source: TimerSource.none,
         );
-        // 停止所有播放
         _stopAllPlayback();
       } else {
         state = state.copyWith(remaining: newRemaining);
 
-        // 当剩余时间小于等于30秒时，开始音量渐弱
-        // if (newRemaining.inSeconds <= 30) {
-        //   final volumeRatio = newRemaining.inSeconds / 30;
-        //   _ref.read(soundProvider.notifier).setGlobalVolume(volumeRatio);
-        // }
+        // 最后30秒音量渐弱
+        if (newRemaining.inSeconds <= 30) {
+          final volumeRatio = newRemaining.inSeconds / 30;
+          Future.microtask(() {
+            _ref.read(playbackStateProvider.notifier).setVolume(volumeRatio);
+          });
+        }
       }
     });
   }
 
+  /// 停止所有播放并退出应用
   void _stopAllPlayback() {
-    // 停止视频播放
-    _ref.read(playbackStateProvider.notifier).setPlaying(false);
-    _ref.read(currentVideoProvider.notifier).clear();
-    _ref.read(streamStateProvider.notifier).clear();
+    try {
+      Future.microtask(() async {
+        try {
+          // 停止播放
+          _ref.read(playbackStateProvider.notifier).setPlaying(false);
+          _ref.read(currentVideoProvider.notifier).clear();
+          _ref.read(streamStateProvider.notifier).clear();
 
-    // 停止声音播放
-    // final sounds = _ref.read(soundProvider);
-    // for (var sound in sounds) {
-    //   if (sound.isPlaying) {
-    //     _ref.read(soundProvider.notifier).toggleSound(sound.id);
-    //   }
-    // }
+          // 等待状态更新
+          await Future.delayed(const Duration(milliseconds: 500));
 
-    // 退出应用
-    SystemNavigator.pop();
+          // 尝试多种方式退出应用
+          SystemNavigator.pop(animated: true);
+          await Future.delayed(const Duration(seconds: 1));
+          SystemChannels.platform.invokeMethod('SystemNavigator.pop');
+          await Future.delayed(const Duration(seconds: 1));
+          exit(0);
+        } catch (e) {
+          debugPrint('应用退出失败，强制退出');
+          exit(0);
+        }
+      });
+    } catch (e) {
+      exit(0);
+    }
   }
 
   @override

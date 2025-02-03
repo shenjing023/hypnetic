@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:just_audio_background/just_audio_background.dart';
 import 'dart:developer' as developer;
 import 'core/theme/app_theme.dart';
 import 'features/audio/screens/home_screen.dart';
+import 'core/models/audio_manager.dart';
 
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
@@ -23,6 +25,9 @@ Future<void> _initializeApp() async {
   try {
     // 确保Flutter绑定初始化
     WidgetsFlutterBinding.ensureInitialized();
+
+    // 初始化音频管理器
+    await AudioManager().initialize();
 
     // 初始化各个服务
     await Future.wait([
@@ -57,33 +62,50 @@ Future<void> _initializeApp() async {
 }
 
 void main() async {
-  // 捕获所有未处理的错误
-  FlutterError.onError = (FlutterErrorDetails details) {
-    FlutterError.presentError(details);
-    // 保留关键错误日志
-    developer.log(
-      '未捕获的Flutter错误',
-      error: details.exception,
-      stackTrace: details.stack,
-    );
-  };
+  // 确保Flutter绑定初始化
+  WidgetsFlutterBinding.ensureInitialized();
 
-  // 捕获所有未处理的异步错误
-  PlatformDispatcher.instance.onError = (error, stack) {
-    // 保留关键错误日志
-    developer.log(
-      '未捕获的平台错误',
-      error: error,
-      stackTrace: stack,
+  try {
+    // 初始化后台音频播放
+    await JustAudioBackground.init(
+      androidNotificationChannelId: 'com.example.hypnetic.channel.audio',
+      androidNotificationChannelName: '白噪音播放',
+      androidNotificationOngoing: true,
+      androidShowNotificationBadge: true,
+      androidStopForegroundOnPause: true,
+      preloadArtwork: true,
     );
-    return true;
-  };
 
-  runApp(
-    const ProviderScope(
-      child: MyApp(),
-    ),
-  );
+    // 捕获所有未处理的错误
+    FlutterError.onError = (FlutterErrorDetails details) {
+      FlutterError.presentError(details);
+      developer.log(
+        '未捕获的Flutter错误',
+        error: details.exception,
+        stackTrace: details.stack,
+      );
+    };
+
+    // 捕获所有未处理的异步错误
+    PlatformDispatcher.instance.onError = (error, stack) {
+      developer.log(
+        '未捕获的平台错误',
+        error: error,
+        stackTrace: stack,
+      );
+      return true;
+    };
+
+    // 运行应用
+    runApp(
+      const ProviderScope(
+        child: MyApp(),
+      ),
+    );
+  } catch (e, stack) {
+    developer.log('初始化失败', error: e, stackTrace: stack);
+    rethrow;
+  }
 }
 
 class MyApp extends ConsumerStatefulWidget {

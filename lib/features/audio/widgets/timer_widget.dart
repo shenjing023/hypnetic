@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:math' as math;
 import '../../../core/providers/timer_provider.dart';
-import '../../../core/providers/sound_provider.dart';
 import 'timer_styles/timer_style.dart';
 import 'timer_styles/circle_timer.dart';
 import 'timer_styles/wave_timer.dart';

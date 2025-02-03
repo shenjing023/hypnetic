@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:video_player/video_player.dart';
+import 'package:just_audio/just_audio.dart';
+import 'package:just_audio_background/just_audio_background.dart';
 import 'package:hypnetic/core/models/video_info.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hypnetic/core/providers/audio_player_provider.dart';
 import 'dart:async';
 
 /// 音频播放器组件
-class AudioPlayerWidget extends StatefulWidget {
+class AudioPlayerWidget extends ConsumerStatefulWidget {
   final StreamInfo streamInfo;
   final Function(Duration) onPositionChanged;
   final bool isPlaying;
@@ -17,17 +20,25 @@ class AudioPlayerWidget extends StatefulWidget {
   });
 
   @override
-  State<AudioPlayerWidget> createState() => _AudioPlayerWidgetState();
+  ConsumerState<AudioPlayerWidget> createState() => _AudioPlayerWidgetState();
 }
 
-class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
-  VideoPlayerController? _controller;
-  Timer? _timer;
+class _AudioPlayerWidgetState extends ConsumerState<AudioPlayerWidget> {
+  AudioPlayer? _player;
+  StreamSubscription? _positionSubscription;
+  StreamSubscription? _playerStateSubscription;
+  StreamSubscription? _volumeSubscription;
+  int _retryCount = 0;
+  static const int maxRetries = 3;
+  static const Duration timeoutDuration = Duration(seconds: 15);
 
   @override
   void initState() {
     super.initState();
-    _initializePlayer();
+    // 使用 addPostFrameCallback 确保在构建完成后初始化
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initializePlayer();
+    });
   }
 
   @override
@@ -38,42 +49,39 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
     if (widget.streamInfo.audioUrl != oldWidget.streamInfo.audioUrl) {
       _disposePlayer().then((_) {
         if (mounted) {
-          _initializePlayer();
+          // 使用 addPostFrameCallback 确保在构建完成后初始化
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _initializePlayer();
+          });
         }
       });
     }
     // 当播放状态改变时，控制播放器
-    else if (widget.isPlaying != oldWidget.isPlaying && _controller != null) {
-      if (widget.isPlaying) {
-        _controller?.play();
-      } else {
-        _controller?.pause();
-      }
+    else if (widget.isPlaying != oldWidget.isPlaying && _player != null) {
+      // 使用 addPostFrameCallback 确保在构建完成后更新状态
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (widget.isPlaying) {
+          _player?.play();
+        } else {
+          _player?.pause();
+        }
+      });
     }
   }
 
   Future<void> _disposePlayer() async {
-    final timer = _timer;
-    final controller = _controller;
-
-    _timer = null;
-    _controller = null;
-
-    timer?.cancel();
-    if (controller != null) {
-      try {
-        await controller.pause();
-        await controller.dispose();
-      } catch (e) {
-        debugPrint('Error disposing player: $e');
+    // 在销毁播放器之前清除 provider 中的引用
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        ref.read(audioPlayerProvider.notifier).setPlayer(null);
       }
-    }
-  }
+    });
 
-  @override
-  void dispose() {
-    _disposePlayer();
-    super.dispose();
+    await _positionSubscription?.cancel();
+    await _playerStateSubscription?.cancel();
+    await _volumeSubscription?.cancel();
+    await _player?.dispose();
+    _player = null;
   }
 
   /// 获取平台特定的HTTP头
@@ -95,108 +103,234 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
     if (!mounted) return;
 
     try {
-      final controller = VideoPlayerController.networkUrl(
-        Uri.parse(widget.streamInfo.audioUrl),
-        httpHeaders: _getPlatformHeaders(),
+      final audioUrl = widget.streamInfo.audioUrl;
+      if (audioUrl.isEmpty) {
+        throw Exception('音频 URL 为空');
+      }
+
+      // 验证 URL 格式
+      final uri = Uri.parse(audioUrl);
+      if (!uri.isAbsolute) {
+        throw Exception('无效的音频 URL: $audioUrl');
+      }
+
+      debugPrint('开始初始化播放器，URL: $audioUrl');
+      final player = AudioPlayer();
+      _player = player;
+
+      // 使用 Future.microtask 确保在下一个微任务中更新 provider
+      Future.microtask(() {
+        if (mounted) {
+          ref.read(audioPlayerProvider.notifier).setPlayer(player);
+        }
+      });
+
+      // 设置音频源
+      final headers = _getPlatformHeaders();
+      debugPrint('使用 headers: $headers');
+
+      final audioSource = AudioSource.uri(
+        uri,
+        headers: {
+          ...headers,
+          'Accept': '*/*',
+          'Accept-Encoding': 'identity',
+          'Range': 'bytes=0-',
+        },
+        tag: MediaItem(
+          id: widget.streamInfo.id,
+          album: widget.streamInfo.platform,
+          title: widget.streamInfo.title,
+          artist: widget.streamInfo.author,
+          artUri: Uri.parse(widget.streamInfo.cover),
+          duration: widget.streamInfo.duration,
+        ),
       );
 
-      _controller = controller;
-      await controller.initialize();
+      // 添加加载状态监听
+      player.playerStateStream.listen(
+        (state) {
+          debugPrint('播放器状态: ${state.processingState}');
+        },
+        onError: (error) {
+          debugPrint('播放器状态错误: $error');
+        },
+      );
 
-      if (!mounted) {
-        controller.dispose();
-        return;
-      }
+      // 使用 catchError 处理加载错误
+      await player
+          .setAudioSource(
+        audioSource,
+        initialPosition: Duration.zero,
+        preload: true,
+      )
+          .timeout(
+        timeoutDuration,
+        onTimeout: () {
+          throw TimeoutException('音频加载超时');
+        },
+      ).catchError((error) async {
+        debugPrint('音频加载失败: $error');
+        if (_retryCount < maxRetries) {
+          _retryCount++;
+          debugPrint('尝试重新加载 (${_retryCount}/$maxRetries)');
+          await Future.delayed(Duration(seconds: _retryCount));
+          return _retryLoadAudio(player, audioSource);
+        } else {
+          throw Exception('音频加载失败，已达到最大重试次数');
+        }
+      });
+
+      debugPrint('音频源设置成功');
+      _retryCount = 0; // 重置重试计数
 
       // 设置循环播放
-      controller.setLooping(true);
+      await player.setLoopMode(LoopMode.one);
 
-      setState(() {});
+      // 监听播放位置
+      _positionSubscription = player.positionStream.listen(
+        (position) {
+          widget.onPositionChanged(position);
+        },
+        onError: (error) {
+          debugPrint('播放位置监听错误: $error');
+        },
+      );
+
+      // 监听播放状态
+      _playerStateSubscription = player.playerStateStream.listen(
+        (state) {
+          debugPrint('播放状态变化: ${state.processingState}');
+          if (state.processingState == ProcessingState.completed) {
+            player.seek(Duration.zero);
+            if (widget.isPlaying) {
+              player.play();
+            }
+          }
+        },
+        onError: (error) {
+          debugPrint('播放状态监听错误: $error');
+        },
+      );
 
       if (widget.isPlaying) {
-        await controller.play();
+        await player.play();
       }
-
-      // 开始监听进度
-      if (mounted) {
-        _startPositionTimer();
-      }
-    } catch (e) {
+    } catch (e, stack) {
       debugPrint('音频播放器初始化失败: $e');
+      debugPrint('错误堆栈: $stack');
       await _disposePlayer();
+      // 如果还有重试次数，则重试
+      if (_retryCount < maxRetries) {
+        _retryCount++;
+        debugPrint('尝试重新初始化 (${_retryCount}/$maxRetries)');
+        await Future.delayed(Duration(seconds: _retryCount));
+        return _initializePlayer();
+      }
     }
   }
 
-  void _startPositionTimer() {
-    _timer?.cancel();
-    _timer = Timer.periodic(const Duration(milliseconds: 200), (timer) {
-      if (_controller != null && _controller!.value.isInitialized) {
-        widget.onPositionChanged(_controller!.value.position);
-      }
-    });
+  Future<void> _retryLoadAudio(
+      AudioPlayer player, AudioSource audioSource) async {
+    try {
+      await player
+          .setAudioSource(
+        audioSource,
+        initialPosition: Duration.zero,
+        preload: true,
+      )
+          .timeout(
+        timeoutDuration,
+        onTimeout: () {
+          throw TimeoutException('音频重试加载超时');
+        },
+      );
+      return;
+    } catch (e) {
+      debugPrint('重试加载失败: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> setVolume(double volume) async {
+    try {
+      await _player?.setVolume(volume.clamp(0.0, 1.0));
+    } catch (e) {
+      debugPrint('设置音量失败: $e');
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_controller == null || !_controller!.value.isInitialized) {
+    if (_player == null) {
       return Container();
     }
 
     return SizedBox(
       height: 10,
       child: Center(
-        child: Stack(
-          children: [
-            // 实际的进度条
-            Positioned.fill(
-              child: VideoProgressIndicator(
-                _controller!,
-                allowScrubbing: true,
-                colors: const VideoProgressColors(
-                  playedColor: Colors.red,
-                  bufferedColor: Colors.white24,
-                  backgroundColor: Colors.white12,
-                ),
-                padding: EdgeInsets.zero,
-              ),
-            ),
-            // 透明的点击层，提供更大的点击区域
-            Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.translucent,
-                onHorizontalDragStart: (details) {
-                  _controller?.pause();
-                },
-                onHorizontalDragUpdate: (details) {
-                  final box = context.findRenderObject() as RenderBox;
-                  final double position = details.localPosition.dx;
-                  final double maxWidth = box.size.width;
-                  final double percent = position / maxWidth;
-                  final Duration duration = _controller!.value.duration;
-                  final double targetSeconds = (duration.inSeconds * percent)
-                      .clamp(0, duration.inSeconds)
-                      .toDouble();
-                  _controller?.seekTo(Duration(seconds: targetSeconds.toInt()));
-                },
-                onHorizontalDragEnd: (details) {
-                  if (widget.isPlaying) {
-                    _controller?.play();
-                  }
-                },
-                onTapDown: (details) {
-                  final box = context.findRenderObject() as RenderBox;
-                  final double position = details.localPosition.dx;
-                  final double maxWidth = box.size.width;
-                  final double percent = position / maxWidth;
-                  final Duration duration = _controller!.value.duration;
-                  final double targetSeconds = (duration.inSeconds * percent)
-                      .clamp(0, duration.inSeconds)
-                      .toDouble();
-                  _controller?.seekTo(Duration(seconds: targetSeconds.toInt()));
-                },
-              ),
-            ),
-          ],
+        child: StreamBuilder<Duration?>(
+          stream: _player?.durationStream,
+          builder: (context, snapshot) {
+            final duration = snapshot.data ?? Duration.zero;
+            return StreamBuilder<Duration>(
+              stream: _player?.positionStream,
+              builder: (context, snapshot) {
+                final position = snapshot.data ?? Duration.zero;
+                return Stack(
+                  children: [
+                    // 进度条
+                    LinearProgressIndicator(
+                      value: duration.inMilliseconds > 0
+                          ? position.inMilliseconds / duration.inMilliseconds
+                          : 0,
+                      backgroundColor: Colors.white24,
+                      valueColor:
+                          const AlwaysStoppedAnimation<Color>(Colors.red),
+                    ),
+                    // 透明的点击层，提供更大的点击区域
+                    Positioned.fill(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onHorizontalDragStart: (details) {
+                          _player?.pause();
+                        },
+                        onHorizontalDragUpdate: (details) {
+                          final box = context.findRenderObject() as RenderBox;
+                          final double position = details.localPosition.dx;
+                          final double maxWidth = box.size.width;
+                          final double percent = position / maxWidth;
+                          final double targetSeconds =
+                              (duration.inSeconds * percent)
+                                  .clamp(0, duration.inSeconds)
+                                  .toDouble();
+                          _player
+                              ?.seek(Duration(seconds: targetSeconds.toInt()));
+                        },
+                        onHorizontalDragEnd: (details) {
+                          if (widget.isPlaying) {
+                            _player?.play();
+                          }
+                        },
+                        onTapDown: (details) {
+                          final box = context.findRenderObject() as RenderBox;
+                          final double position = details.localPosition.dx;
+                          final double maxWidth = box.size.width;
+                          final double percent = position / maxWidth;
+                          final double targetSeconds =
+                              (duration.inSeconds * percent)
+                                  .clamp(0, duration.inSeconds)
+                                  .toDouble();
+                          _player
+                              ?.seek(Duration(seconds: targetSeconds.toInt()));
+                        },
+                      ),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
         ),
       ),
     );

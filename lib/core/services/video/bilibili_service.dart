@@ -181,9 +181,21 @@ class BilibiliService implements VideoService {
           throw Exception('无法获取音频流地址');
         }
 
-        final audioUrl = audios[0]['baseUrl'] as String;
+        // 选择最佳质量的音频流
+        final audio = audios.reduce((a, b) {
+          final qualityA = a['id'] as int? ?? 0;
+          final qualityB = b['id'] as int? ?? 0;
+          return qualityA > qualityB ? a : b;
+        });
+
+        final audioUrl = audio['baseUrl'] as String;
         String? videoUrl;
         String? quality;
+
+        // 确保使用 HTTPS
+        final processedAudioUrl = audioUrl.startsWith('http:')
+            ? 'https${audioUrl.substring(4)}'
+            : audioUrl;
 
         if (videos != null && videos.isNotEmpty) {
           videoUrl = videos[0]['baseUrl'] as String;
@@ -191,7 +203,7 @@ class BilibiliService implements VideoService {
         }
 
         return BilibiliStreamInfo(
-          audioUrl: audioUrl,
+          audioUrl: processedAudioUrl,
           videoUrl: videoUrl,
           quality: quality,
           id: bvid,

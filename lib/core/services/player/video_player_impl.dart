@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:video_player/video_player.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import 'player_interface.dart';
 import '../cache/audio_cache_manager.dart';
 
@@ -176,6 +177,9 @@ class VideoPlayerImpl implements Player {
     if (_state.value == PlayerState.error) return;
 
     try {
+      // 启用屏幕常亮
+      await WakelockPlus.enable();
+
       await _controller.play();
       _startPositionTimer();
     } catch (e) {
@@ -188,6 +192,9 @@ class VideoPlayerImpl implements Player {
     if (_state.value == PlayerState.error) return;
 
     try {
+      // 禁用屏幕常亮
+      await WakelockPlus.disable();
+
       await _controller.pause();
       _stopPositionTimer();
     } catch (e) {
@@ -256,10 +263,12 @@ class VideoPlayerImpl implements Player {
 
   @override
   Future<void> dispose() async {
+    // 确保释放屏幕常亮
+    await WakelockPlus.disable();
+
     _stopPositionTimer();
-    _controller.removeListener(_listener);
+    _eventController.close();
     await _controller.dispose();
-    await _eventController.close();
 
     _state.dispose();
     _position.dispose();

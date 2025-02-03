@@ -3,6 +3,10 @@ import '../models/video_info.dart';
 import '../services/video/video_service_manager.dart';
 import '../services/error/app_error.dart';
 import 'dart:math';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'audio_player_provider.dart';
 
 part 'video_provider.g.dart';
 
@@ -90,9 +94,9 @@ class PlaybackState extends _$PlaybackState {
     );
   }
 
-  void setPlaying(bool isPlaying) {
+  void setPlaying(bool playing) {
     state = (
-      isPlaying: isPlaying,
+      isPlaying: playing,
       position: state.position,
       duration: state.duration,
     );
@@ -112,6 +116,10 @@ class PlaybackState extends _$PlaybackState {
       position: state.position,
       duration: duration,
     );
+  }
+
+  void setVolume(double volume) {
+    ref.read(audioPlayerProvider.notifier).setVolume(volume);
   }
 
   void reset() {

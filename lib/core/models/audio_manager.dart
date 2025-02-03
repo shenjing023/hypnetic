@@ -1,4 +1,6 @@
 import 'package:just_audio/just_audio.dart';
+import 'package:just_audio_background/just_audio_background.dart';
+import 'package:audio_session/audio_session.dart';
 
 /// 音频加载异常
 class AudioLoadException implements Exception {
@@ -33,6 +35,23 @@ class AudioManager {
   String? _currentPlayingId;
   Function(String, bool)? onPlayStateChanged; // 添加状态变化回调
 
+  /// 初始化音频会话
+  Future<void> initialize() async {
+    final session = await AudioSession.instance;
+    await session.configure(const AudioSessionConfiguration(
+      avAudioSessionCategory: AVAudioSessionCategory.playback,
+      avAudioSessionCategoryOptions:
+          AVAudioSessionCategoryOptions.mixWithOthers,
+      avAudioSessionMode: AVAudioSessionMode.defaultMode,
+      androidAudioAttributes: AndroidAudioAttributes(
+        contentType: AndroidAudioContentType.music,
+        usage: AndroidAudioUsage.media,
+      ),
+      androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
+      androidWillPauseWhenDucked: true,
+    ));
+  }
+
   /// 加载音频资源
   ///
   /// [id] 音频唯一标识符
@@ -41,7 +60,15 @@ class AudioManager {
   Future<void> loadAudio(String id, String assetPath) async {
     try {
       if (!_audioSources.containsKey(id)) {
-        final audioSource = AudioSource.asset(assetPath);
+        final audioSource = AudioSource.asset(
+          assetPath,
+          tag: MediaItem(
+            id: id,
+            album: "白噪音",
+            title: "放松音乐",
+            artUri: Uri.parse("asset:///assets/images/default_cover.jpg"),
+          ),
+        );
         _audioSources[id] = audioSource;
 
         final player = AudioPlayer();
@@ -140,6 +167,7 @@ class AudioManager {
   }
 
   Future<void> setVolume(String id, double volume) async {
+    volume = volume.clamp(0.0, 1.0);
     try {
       final player = _players[id];
       if (player != null) {
@@ -152,6 +180,7 @@ class AudioManager {
   }
 
   Future<void> setGlobalVolume(double volume) async {
+    volume = volume.clamp(0.0, 1.0);
     try {
       for (var entry in _players.entries) {
         if (entry.key == _currentPlayingId) {
